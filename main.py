@@ -59,6 +59,12 @@ def parse_args():
                         help="Starting bankroll (default: 1000)")
     parser.add_argument("--max-markets", type=int, default=None,
                         help="Max number of markets to fetch")
+    parser.add_argument("--slippage", type=int, default=None,
+                        help="Slippage in basis points (default: 50 = 0.5%%)")
+    parser.add_argument("--fees", type=int, default=None,
+                        help="Transaction fee in basis points (default: 0)")
+    parser.add_argument("--min-volume", type=float, default=None,
+                        help="Minimum market volume to include (default: 500)")
 
     return parser.parse_args()
 
@@ -68,6 +74,12 @@ def main():
 
     if args.max_markets:
         config.MAX_MARKETS = args.max_markets
+    if args.slippage is not None:
+        config.SLIPPAGE_BPS = args.slippage
+    if args.fees is not None:
+        config.TRANSACTION_FEE_BPS = args.fees
+    if args.min_volume is not None:
+        config.MIN_VOLUME = args.min_volume
 
     use_cache = not args.no_cache
 

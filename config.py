@@ -22,6 +22,11 @@ DEFAULT_THRESHOLDS = [0.03, 0.05, 0.08, 0.10, 0.15, 0.20, 0.25, 0.30]
 DEFAULT_BET_SIZES = [1, 5, 10, 25, 50, 100]
 DEFAULT_WINDOW_SIZES = [30, 60, 90, 180, 365]  # days
 
+# Realism parameters
+SLIPPAGE_BPS = 50  # basis points of slippage per trade (0.5%)
+MIN_VOLUME = 500  # minimum market volume to include ($)
+TRANSACTION_FEE_BPS = 0  # Polymarket currently has 0 fees, but toggle-able
+
 # Strategy types
 STRATEGIES = {
     "flat": "Fixed bet size on all qualifying events",

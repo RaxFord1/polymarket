@@ -267,12 +267,22 @@ def generate_report(df):
     print(f"\nTotal configurations tested: {len(agg)}")
     print(f"Configurations with 10+ bets: {len(valid)}")
 
+    # Show realism settings
+    try:
+        from config import SLIPPAGE_BPS, TRANSACTION_FEE_BPS, MIN_VOLUME
+        print(f"\nRealism settings: slippage={SLIPPAGE_BPS}bps, "
+              f"fees={TRANSACTION_FEE_BPS}bps, min_volume=${MIN_VOLUME}")
+    except ImportError:
+        pass
+
     print("\n--- TOP 10 BY ROI (min 10 bets) ---")
     top_roi = valid.nlargest(10, "roi")
+    has_ann = "annualized_roi" in valid.columns
     for _, row in top_roi.iterrows():
+        ann = f" | ann={row['annualized_roi']:>+7.1%}" if has_ann else ""
         print(f"  {row['strategy']:15s} | threshold={row['threshold']:.0%} | "
               f"bet=${row['base_bet']:>3.0f} | window={row['window_days']:>3.0f}d | "
-              f"ROI={row['roi']:>+7.1%} | bets={row['total_bets']:>4.0f} | "
+              f"ROI={row['roi']:>+7.1%}{ann} | bets={row['total_bets']:>4.0f} | "
               f"profit=${row['total_profit']:>+8.2f}")
 
     print("\n--- TOP 10 BY PROFIT (min 10 bets) ---")
@@ -317,5 +327,20 @@ def generate_report(df):
         "total_profit": "sum",
     }).round(4)
     print(thresh_summary.to_string())
+
+    # Risk warnings based on data
+    print("\n--- RISK WARNINGS ---")
+    martingale_data = valid[valid["strategy"] == "martingale"]
+    if not martingale_data.empty:
+        worst_mart = martingale_data["roi"].min()
+        if worst_mart < -0.5:
+            print(f"  ! Martingale worst ROI: {worst_mart:+.1%} — high ruin risk with large bets")
+    low_bet_configs = valid[valid["total_bets"] < 20]
+    if not low_bet_configs.empty and not low_bet_configs[low_bet_configs["roi"] > 1.0].empty:
+        print(f"  ! {len(low_bet_configs[low_bet_configs['roi'] > 1.0])} configs with ROI>100% "
+              f"have <20 bets — likely noise, not signal")
+    if "avg_days_held" in valid.columns:
+        avg_hold = valid["avg_days_held"].mean()
+        print(f"  ! Average hold time: {avg_hold:.0f} days — capital is locked for extended periods")
 
     print("\n" + "=" * 80)
