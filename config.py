@@ -7,7 +7,7 @@ DATA_API = "https://data-api.polymarket.com"
 
 # Data fetching
 FETCH_LIMIT = 100  # markets per page
-MAX_MARKETS = 5000  # max markets to fetch
+MAX_MARKETS = 15000  # max markets to fetch
 REQUEST_DELAY = 0.15  # seconds between requests to avoid rate limiting
 PRICE_HISTORY_CHUNK_DAYS = 15  # chunk size for price history requests
 PRICE_HISTORY_FIDELITY = 60  # minutes between price points
