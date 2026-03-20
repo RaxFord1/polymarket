@@ -28,10 +28,12 @@ class Bet:
     """Represents a single simulated bet."""
 
     __slots__ = ("market_id", "question", "entry_price", "bet_size",
-                 "resolved_yes", "payout", "profit", "roi", "entry_date", "resolve_date")
+                 "resolved_yes", "payout", "profit", "roi", "entry_date",
+                 "resolve_date", "days_held", "annualized_roi")
 
     def __init__(self, market_id, question, entry_price, bet_size,
-                 resolved_yes, entry_date, resolve_date):
+                 resolved_yes, entry_date, resolve_date,
+                 slippage_bps=0, fee_bps=0):
         self.market_id = market_id
         self.question = question
         self.entry_price = entry_price
@@ -40,14 +42,31 @@ class Bet:
         self.entry_date = entry_date
         self.resolve_date = resolve_date
 
+        # Apply slippage: buying pushes price up
+        slippage = entry_price * (slippage_bps / 10000)
+        effective_price = min(entry_price + slippage, 0.999)
+        # Apply transaction fee
+        fee = bet_size * (fee_bps / 10000)
+
         if resolved_yes:
-            self.payout = bet_size / entry_price  # YES share pays $1
-            self.profit = self.payout - bet_size
+            self.payout = bet_size / effective_price  # YES share pays $1
+            self.profit = self.payout - bet_size - fee
         else:
             self.payout = 0
-            self.profit = -bet_size
+            self.profit = -bet_size - fee
 
         self.roi = self.profit / bet_size if bet_size > 0 else 0
+
+        # Annualized ROI based on time held
+        self.days_held = (resolve_date - entry_date).days if resolve_date and entry_date else 0
+        if self.days_held > 0 and bet_size > 0:
+            total_return = 1 + self.roi
+            if total_return > 0:
+                self.annualized_roi = total_return ** (365 / self.days_held) - 1
+            else:
+                self.annualized_roi = -1.0
+        else:
+            self.annualized_roi = self.roi
 
 
 class BacktestResult:
@@ -125,6 +144,26 @@ class BacktestResult:
         gross_loss = abs(sum(b.profit for b in self.bets if b.profit < 0))
         return gross_profit / gross_loss if gross_loss > 0 else float('inf')
 
+    @property
+    def avg_days_held(self):
+        held = [b.days_held for b in self.bets if b.days_held > 0]
+        return np.mean(held) if held else 0
+
+    @property
+    def portfolio_annualized_roi(self):
+        """Annualized ROI at the portfolio level (total return over avg holding period).
+        Capped at 9999% to avoid meaningless astronomical numbers from short windows."""
+        if not self.bets or self.total_wagered == 0:
+            return 0
+        avg_days = self.avg_days_held
+        if avg_days <= 0:
+            return self.roi
+        total_return = 1 + self.roi
+        if total_return <= 0:
+            return -1.0
+        ann = total_return ** (365 / avg_days) - 1
+        return min(ann, 99.99)  # cap at 9999%
+
     def summary(self):
         return {
             "strategy": self.strategy_name,
@@ -144,22 +183,35 @@ class BacktestResult:
             "max_drawdown": round(self.max_drawdown, 2),
             "sharpe_ratio": round(self.sharpe_ratio, 4),
             "profit_factor": round(self.profit_factor, 4),
+            "avg_days_held": round(self.avg_days_held, 1),
+            "annualized_roi": round(self.portfolio_annualized_roi, 4),
         }
 
 
-def prepare_market_data(markets, price_data_map):
+def prepare_market_data(markets, price_data_map, min_volume=None):
     """Prepare markets with their entry prices into a sorted list.
 
     For each market, we take the median price from available history
     as the "entry price" (simulating buying at a typical price point).
     """
+    from config import MIN_VOLUME
+    if min_volume is None:
+        min_volume = MIN_VOLUME
+
     entries = []
+    filtered_volume = 0
 
     for market in markets:
         mid = market["id"]
         prices = price_data_map.get(mid)
 
         if not prices or len(prices) < 2:
+            continue
+
+        # Liquidity filter: skip low-volume markets
+        volume = market.get("volume", 0)
+        if volume < min_volume:
+            filtered_volume += 1
             continue
 
         resolve_date = _parse_date(market.get("end_date") or market.get("closed_time"))
@@ -198,8 +250,15 @@ def prepare_market_data(markets, price_data_map):
 
 
 def run_backtest(entries, strategy_name, threshold, base_bet, bankroll,
-                 window_start, window_end, window_days):
+                 window_start, window_end, window_days,
+                 slippage_bps=None, fee_bps=None):
     """Run a single backtest with given parameters."""
+    from config import SLIPPAGE_BPS, TRANSACTION_FEE_BPS
+    if slippage_bps is None:
+        slippage_bps = SLIPPAGE_BPS
+    if fee_bps is None:
+        fee_bps = TRANSACTION_FEE_BPS
+
     strategy = create_strategy(strategy_name, base_bet, bankroll)
     result = BacktestResult(strategy_name, threshold, base_bet,
                             window_days, window_start, window_end)
@@ -229,6 +288,8 @@ def run_backtest(entries, strategy_name, threshold, base_bet, bankroll,
             resolved_yes=market["resolved_yes"],
             entry_date=entry["entry_date"],
             resolve_date=entry["resolve_date"],
+            slippage_bps=slippage_bps,
+            fee_bps=fee_bps,
         )
 
         result.add_bet(bet)
@@ -377,4 +438,11 @@ def _aggregate_window_results(results, strategy_name, threshold, base_bet, windo
             np.mean([r.profit_factor for r in results
                      if r.total_bets > 0 and not math.isinf(r.profit_factor)]), 4
         ) if any(not math.isinf(r.profit_factor) for r in results if r.total_bets > 0) else 0,
+        "avg_days_held": round(
+            np.mean([r.avg_days_held for r in results if r.total_bets > 0]), 1
+        ),
+        "annualized_roi": round(
+            np.mean([r.portfolio_annualized_roi for r in results
+                     if r.total_bets > 0 and not math.isinf(r.portfolio_annualized_roi)]), 4
+        ) if any(r.total_bets > 0 for r in results) else 0,
     }
